@@ -51,7 +51,7 @@ contract Lava {
     maxGuess = _size;
   }
 
-  function submitRand(uint _value) public {
+  function submitRand(uint _value) public payable {
     // √ create Rand struct
     // √ add new Rand struct to rands
     // X return stake of previous submitter's Rand submission
@@ -68,13 +68,13 @@ contract Lava {
     CURRIDX = (CURRIDX + 1) % MAXRAND;
   }
 
-  function submitPredWindow(uint[] _guess) public {
+  function submitPredWindow(uint[] _guess) public payable {
     // X create PredUnit and PredWindow
     // X settle conflicts by stake > window size > min timestamp
     // X add to preds
     // √ register/ledger deposit
     require(msg.value == PREDSTAKE);
-    
+
   }
 
   function requestRand() public payable returns (uint) {
