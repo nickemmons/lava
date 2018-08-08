@@ -1,6 +1,7 @@
 pragma solidity ^0.4.23;
 
 import "openzeppelin-solidity/math/SafeMath.sol";
+/* import "browser/SafeMath.sol"; */
 
 contract Lava {
 
@@ -33,8 +34,9 @@ contract Lava {
   uint RANDDEPOSIT = 0.01 ether;
   uint PREDWAGER = 0.01 ether;
   uint CURRIDX = 0; // current index in rands
-  Rand[MAXRAND] rands; // cyclical array
+  /* Rand[MAXRAND] rands; // cyclical array */
 
+  mapping(uint => Rand) rands; // cyclical array
   mapping(bytes32 => PredWindow) public predWindowId2predWindow;
   mapping(uint => PredUnit[]) public arrIdx2predUnitArr;
   mapping(uint => bool) public arrIdx2lost; // true if rander at index lost to a preder, else false (default false)
@@ -44,8 +46,8 @@ contract Lava {
     // √ add new Rand struct to rands
     // √ register/ledger deposit
     require(msg.value == RANDDEPOSIT);
-    byte32 newId = keccack256(now, msg.sender);
-    Rand newRand = Rand({
+    bytes32 newId = keccak256(abi.encodePacked(now, msg.sender));
+    Rand memory newRand = Rand({
       submitter: msg.sender,
       value: _value
     });
@@ -65,15 +67,15 @@ contract Lava {
     // √ register/ledger deposit
     require(msg.value == PREDWAGER.mul(_guess.length)); // 1 wager per prediction
     require(_guess.length <= MAXRAND);
-    byte32 newId = keccack256(now, msg.sender);
+    bytes32 newId = keccak256(abi.encodePacked(now, msg.sender));
     predWindowId2predWindow[newId] = PredWindow({
         submitter: msg.sender,
         preds: _guess,
-        id: newId, // keccack256(this.submitter, this.timestamp)
+        id: newId, // keccak256(this.submitter, this.timestamp)
         timestamp: now
     });
     for (uint i=0; i<_guess.length; i++) {
-      PredUnit newUnit = PredUnit({
+      PredUnit memory newUnit = PredUnit({
         windowId: newId,
         arrIdx: i,
         value: _guess[i]
@@ -89,7 +91,7 @@ contract Lava {
     // √ sends payments to appropriate players (rander recency or preder relative wager)
     // √ returns rand from timeline of most current timestamp
     require(msg.value == RANDPRICE);
-    PredUnit[] winners;
+    PredUnit[] storage winners;
     for (uint i=0; i<arrIdx2predUnitArr[CURRIDX].length; i++) {
       if (arrIdx2predUnitArr[CURRIDX][i].value == rands[CURRIDX].value) {
         winners.push(arrIdx2predUnitArr[CURRIDX][i]); // get list of winning preders' PredUnit's
@@ -99,17 +101,17 @@ contract Lava {
       uint reward = PREDWAGER.add((RANDPRICE.add(RANDDEPOSIT)).div(winners.length));
       uint earliestTime = predWindowId2predWindow(winners[0].windowId).timestamp;
       uint earliestPreder = predWindowId2predWindow(winners[0].windowId).submitter;
-      for (uint i=0; i<winners.length; i++) {
+      for (i=0; i<winners.length; i++) {
         predWindowId2predWindow(winners[i].windowId).submitter.transfer(reward); // pay winning preders
         if (earliestTime > predWindowId2predWindow(winners[i].windowId).timestamp) {
           earliestTime = predWindowId2predWindow(winners[i].windowId).timestamp;
           earliestPreder = predWindowId2predWindow(winners[i].windowId).submitter;
         }
       }
-      earliestPreder.transfer(this.balance); // send pot to first correct preder
+      earliestPreder.transfer(this.balance - (MAXRAND-1)*RANDDEPOSIT); // send pot to first correct preder
 
     } else { // a single rander won, all recent randers get paid
-      for (uint i=0; i<MAXRAND; i++) {
+      for (i=0; i<MAXRAND; i++) {
         rands[(CURRIDX.add(i)) % MAXRAND].submitter.transfer(RANDPRICE.div((i.add(2)))); // get winning rander (submitted Rand found at CURRIDX), pay randers according to rule
       }
     }
