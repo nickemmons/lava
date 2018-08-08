@@ -1,0 +1,22 @@
+{
+  "name": "lava",
+  "version": "1.0.0",
+  "description": "Decentralized Random Number Generation",
+  "main": "truffle.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/kpeluso/lava.git"
+  },
+  "author": "Kenny Peluso",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/kpeluso/lava/issues"
+  },
+  "homepage": "https://github.com/kpeluso/lava#readme",
+  "dependencies": {
+    "openzeppelin-solidity": "1.11.0"
+  }
+}
