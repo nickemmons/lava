@@ -15,5 +15,8 @@
   "bugs": {
     "url": "https://github.com/kpeluso/lava/issues"
   },
-  "homepage": "https://github.com/kpeluso/lava#readme"
+  "homepage": "https://github.com/kpeluso/lava#readme",
+  "dependencies": {
+    "openzeppelin-solidity": "1.11.0"
+  }
 }
