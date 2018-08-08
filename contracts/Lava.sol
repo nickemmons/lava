@@ -1,6 +1,10 @@
 pragma solidity ^0.4.23;
 
+import "openzeppelin-solidity/math/SafeMath.sol";
+
 contract Lava {
+
+  using SafeMath for uint;
 
   //
   //
@@ -69,7 +73,7 @@ contract Lava {
     });
     /* rands[CURRIDX].submitter.transfer() // return deposit to previous rander << I FORGET WHY I PUT A DEPOSIT IN THE FIRST PLACE FOR RANDERS... */
     rands[CURRIDX] = _value;
-    CURRIDX = (CURRIDX + 1) % MAXRAND;
+    CURRIDX = (CURRIDX.add(1)) % MAXRAND;
     emit receivedRand(msg.sender, _value);
   }
 
@@ -78,7 +82,7 @@ contract Lava {
     // √ create accessible PredWindow
     // √ add to preds
     // √ register/ledger deposit
-    require(msg.value == PREDWAGER*_guess.length); // 1 wager per prediction
+    require(msg.value == PREDWAGER.mul(_guess.length)); // 1 wager per prediction
     require(_guess.length <= MAXRAND);
     byte32 newId = keccack256(now, msg.sender);
     predWindowId2predWindow[newId] = PredWindow({
@@ -138,11 +142,11 @@ contract Lava {
     }
     if (winners.length > 0) { // at least one preder wins
       for (uint i=0; i<winners.length; i++) {
-        predWindowId2predWindow(winners[i].windowId).submitter.transfer(PREDWAGER + RANDPRICE / winnders.length); // pay winning preders
+        predWindowId2predWindow(winners[i].windowId).submitter.transfer(PREDWAGER + RANDPRICE / winners.length); // pay winning preders
       }
     } else { // a single rander won, all recent randers get paid
       for (uint i=0; i<MAXRAND; i++) {
-        rands[(CURRIDX + i) % MAXRAND].submitter.transfer(RANDPRICE / (2+i)); // get winning rander (submitted Rand found at CURRIDX), pay randers according to rule
+        rands[(CURRIDX.add(i)) % MAXRAND].submitter.transfer(RANDPRICE.div((i.add(2)))); // get winning rander (submitted Rand found at CURRIDX), pay randers according to rule
       }
       //
       // put any excess in gas fund
@@ -165,7 +169,7 @@ contract Lava {
   function sum(uint[] _ls) internal pure returns (uint) {
     uint output;
     for (uint i=0; i<_ls.length; i++) {
-      output = output + _ls[i];
+      output = output.add(_ls[i]);
     }
     return output;
   }
