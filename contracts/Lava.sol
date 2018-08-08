@@ -142,7 +142,7 @@ contract Lava {
     }
     if (winners.length > 0) { // at least one preder wins
       for (uint i=0; i<winners.length; i++) {
-        predWindowId2predWindow(winners[i].windowId).submitter.transfer(PREDWAGER + RANDPRICE / winnders.length); // pay winning preders
+        predWindowId2predWindow(winners[i].windowId).submitter.transfer(PREDWAGER + RANDPRICE / winners.length); // pay winning preders
       }
     } else { // a single rander won, all recent randers get paid
       for (uint i=0; i<MAXRAND; i++) {
