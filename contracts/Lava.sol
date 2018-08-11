@@ -26,11 +26,11 @@ contract Lava {
   event receivedPred(address indexed _from, bytes32 _id, uint[] _window);
   event requestedRand(address indexed _from, uint _value); // who requested a value and the value they received
 
-  uint MAXRAND = 1024; // maximum number of rands in array
+  uint MAXRAND = 100; // maximum number of rands in array
   uint RANDPRICE = 0.1 ether;
   uint RANDDEPOSIT = 0.01 ether;
   uint PREDWAGER = 0.01 ether;
-  uint CURRIDX = 0; // current index in rands
+  uint CURRIDX = 1; // current index in rands
   PredUnit[] winners;
   /* Rand[MAXRAND] rands; // cyclical array */
 
@@ -41,7 +41,13 @@ contract Lava {
   mapping(uint => bool) public arrIdx2lost; // true if rander at index lost to a preder, else false (default false)
 
   constructor () public payable {
-
+    require(msg.value >= RANDDEPOSIT);
+    for (uint i=0; i<MAXRAND; i++) {
+      randExists[i] = false;
+    //   arrIdx2predUnitArr[i] = ls;
+      arrIdx2lost[i] = false;
+    }
+    rands[0] = Rand({submitter: address(this), value: 0});
   }
 
   function submitRand(uint _value) public payable {
@@ -91,37 +97,46 @@ contract Lava {
     // √ sends payments to appropriate players (rander recency or preder relative wager)
     // √ returns rand from timeline of most current timestamp
     require(msg.value >= RANDPRICE);
-    uint outputIdx = CURRIDX.sub(1);
-    for (uint i=0; i<MAXRAND; i++) {
-      if (randExists[(outputIdx.sub(i)) % MAXRAND]) {
-        rands[(outputIdx.sub(i)) % MAXRAND].submitter.transfer(RANDPRICE.div((i.add(2)))); // get winning rander (submitted Rand found at CURRIDX), pay randers according to rule
+    uint outputIdx = CURRIDX.sub(1) % MAXRAND;
+    uint idx;
+
+    for (uint i=0; i<arrIdx2predUnitArr[outputIdx].length; i++) {
+      if (arrIdx2predUnitArr[outputIdx][i].value == rands[outputIdx].value) {
+        winners.push(arrIdx2predUnitArr[outputIdx][i]); // get list of winning preders' PredUnit's
       }
     }
-    // for (uint i=0; i<arrIdx2predUnitArr[outputIdx].length; i++) {
-    //   if (arrIdx2predUnitArr[outputIdx][i].value == rands[outputIdx].value) {
-    //     winners.push(arrIdx2predUnitArr[outputIdx][i]); // get list of winning preders' PredUnit's
-    //   }
-    // }
-    // if (winners.length > 0) { // at least one preder wins
-    //   arrIdx2lost[outputIdx] = true;
-    //   uint reward = PREDWAGER.add((RANDPRICE.add(RANDDEPOSIT)).div(winners.length));
-    // //   uint earliestTime = predWindowId2predWindow[winners[0].windowId].timestamp;
-    //   address earliestPreder = predWindowId2predWindow[winners[0].windowId].submitter;
-    //   for (i=0; i<winners.length; i++) {
-    //     predWindowId2predWindow[winners[i].windowId].submitter.transfer(reward); // pay winning preders
-    //     // if (earliestTime > predWindowId2predWindow[winners[i].windowId].timestamp) {
-    //     //   earliestTime = predWindowId2predWindow[winners[i].windowId].timestamp;
-    //     //   earliestPreder = predWindowId2predWindow[winners[i].windowId].submitter;
-    //     // }
-    //   }
-    //   uint val = MAXRAND.sub(1);
-    //   earliestPreder.transfer(address(this).balance.sub(val.mul(RANDDEPOSIT))); // send pot to first correct preder
 
-    // } else { // a single rander won, all recent randers get paid
-    //   for (i=0; i<MAXRAND; i++) {
-    //     rands[(outputIdx.add(i)) % MAXRAND].submitter.transfer(RANDPRICE.div((i.add(2)))); // get winning rander (submitted Rand found at CURRIDX), pay randers according to rule
+    if (winners.length > 0) { // at least one preder wins
+      arrIdx2lost[outputIdx] = true;
+      uint reward = PREDWAGER.add((RANDPRICE.add(RANDDEPOSIT)).div(winners.length));
+      // uint earliestTime = predWindowId2predWindow[winners[0].windowId].timestamp;
+      address earliestPreder = predWindowId2predWindow[winners[0].windowId].submitter;
+      for (i=0; i<winners.length; i++) {
+        predWindowId2predWindow[winners[i].windowId].submitter.transfer(reward); // pay winning preders
+        // if (earliestTime > predWindowId2predWindow[winners[i].windowId].timestamp) {
+        //   earliestTime = predWindowId2predWindow[winners[i].windowId].timestamp;
+        //   earliestPreder = predWindowId2predWindow[winners[i].windowId].submitter;
+        // }
+      }
+      uint val = MAXRAND.sub(1);
+      earliestPreder.transfer(address(this).balance.sub(val.mul(RANDDEPOSIT))); // send pot to first correct preder
+    } else { // a single rander won, all recent randers get paid
+      idx = uint(int(outputIdx) - int(i) % int(MAXRAND));
+      if (randExists[idx]) {
+        rands[idx].submitter.transfer(RANDPRICE.div((i.add(2)))); // get winning rander (submitted Rand found at CURRIDX), pay randers according to rule
+      }
+    }
+
+    /*
+    // rands[outputIdx].submitter.transfer(RANDPRICE); // get winning rander (submitted Rand found at CURRIDX), pay randers according to rule
+    // for (uint i=0; i<MAXRAND; i++) {
+    //   idx = uint(int(outputIdx) - int(i) % int(MAXRAND));
+    //   if (randExists[idx]) {
+    //     rands[idx].submitter.transfer(RANDPRICE.div((i.add(2)))); // get winning rander (submitted Rand found at CURRIDX), pay randers according to rule
     //   }
     // }
+    */
+
     // delete arrIdx2predUnitArr[outputIdx]; // reset array
     emit requestedRand(msg.sender, rands[outputIdx].value);
     // winners.length = 0;
