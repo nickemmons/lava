@@ -3,7 +3,7 @@ pragma solidity ^0.4.23;
 // import "openzeppelin-solidity/math/SafeMath.sol";
 import "browser/SafeMath.sol";
 
-contract Lava {
+contract Lava2 {
 
   using SafeMath for uint;
 
@@ -13,23 +13,15 @@ contract Lava {
   }
 
   struct PredUnit {
-      string windowId; // super.id == id of parent window
+      address submitter;
       uint value;
   }
 
-  struct PredWindow {
-      address submitter;
-    //   uint timestamp;
-  }
-
   event receivedRand(address indexed _from, uint _value);
-  event receivedPred(address indexed _from, bytes32 _id, uint[] _window);
+  event receivedPred(address indexed _from, uint[] _window);
   event requestedRand(address indexed _from, uint _value); // who requested a value and the value they received
 
   uint MAXRAND = 3; // maximum number of rands in array // 100
-//   uint RANDPRICE = 0.1 ether;
-//   uint RANDDEPOSIT = 0.01 ether;
-//   uint PREDWAGER = 0.01 ether;
   uint RANDPRICE = 10 ether;
   uint RANDDEPOSIT = 1 ether;
   uint PREDWAGER = 1 ether;
@@ -38,14 +30,18 @@ contract Lava {
 
   mapping(uint => Rand) private rands; // cyclical array
   mapping(uint => bool) public randExists; // true if random number exists at index in cyclical array, else false
-  mapping(string => PredWindow) public predWindowId2predWindow;
+
   mapping(uint => PredUnit[]) public arrIdx2predUnitArr;
   mapping(uint => bool) public arrIdx2lost; // true if rander at index lost to a preder, else false (default false)
+//   mapping(bytes32 => address) public prederHash2prederAddress;
+
+  mapping(uint => bytes32) public arrIdx2predListHash;
+  mapping(bytes32 => bytes32[]) public predListHash2predIds;
+  mapping(bytes32 => PredUnit) public predId2pred; // id == keccak256(abi.encodePacked(submitter, value))
 
   constructor () public payable {
     for (uint i=0; i<MAXRAND; i++) {
       randExists[i] = false;
-      arrIdx2predUnitArr[i].length = 0;
       arrIdx2lost[i] = false;
     }
     rands[0] = Rand({submitter: address(this), value: 0});
@@ -77,22 +73,26 @@ contract Lava {
     // √ register/ledger deposit
     require(msg.value >= PREDWAGER.mul(_guess.length)); // 1 wager per prediction
     require(_guess.length <= MAXRAND);
-    bytes32 newId = keccak256(abi.encodePacked(now, msg.sender));
-    predWindowId2predWindow[bytes32ToString(newId)] = PredWindow({
-        submitter: msg.sender
-        // timestamp: now
-    });
+
+    bytes32[1] memory newLs;
+    // newLs.length = 1;
+
     for (uint i=0; i<_guess.length; i++) {
       PredUnit memory newUnit = PredUnit({
-        windowId: bytes32ToString(newId),
+        submitter: msg.sender,
         value: _guess[i]
       });
-      arrIdx2predUnitArr[(i+CURRIDX) % MAXRAND].length++;
-      arrIdx2predUnitArr[(i+CURRIDX) % MAXRAND].push(newUnit);
+      newLs[0] = keccak256(abi.encodePacked(msg.sender, _guess[i]));
+      predId2pred[newLs[0]] = newUnit;
+      bytes32[] memory appended = concat(predListHash2predIds[arrIdx2predListHash[(i+CURRIDX) % MAXRAND]], newLs);
+      bytes32 newHash = keccak256(abi.encodePacked(appended));
+      predListHash2predIds[newHash] = appended;
+      arrIdx2predListHash[(i+CURRIDX) % MAXRAND] = newHash;
     }
-    emit receivedPred(msg.sender, newId, _guess);
+    emit receivedPred(msg.sender, _guess);
   }
 
+/*
   function requestRand() public payable returns (uint) {
     // √ register/ledger payment
     // √ initiates auditing process (was there a correct prediction)
@@ -101,91 +101,59 @@ contract Lava {
     require(msg.value >= RANDPRICE);
     uint outputIdx = CURRIDX.sub(1) % MAXRAND;
     uint idx;
-
-    for (uint i=0; i<arrIdx2predUnitArr[outputIdx].length; i++) {
-      if (arrIdx2predUnitArr[outputIdx][i].value == rands[outputIdx].value) {
-        winners.length++;
-        winners.push(arrIdx2predUnitArr[outputIdx][i]); // get list of winning preders' PredUnit's
+    // find winning preders
+    PredUnit[] candidates = predListHash2predIds[arrIdx2predListHash[outputIdx]];
+    for (uint i=0; i<min(candidates.length); i++) {
+      if (candidates[i].value == rands[outputIdx].value) {
+        winners.push(candidates[i]); // get list of winning preders' PredUnit's
       }
     }
-
-    if (winners.length > 0) { // at least one preder wins
+    // at least one preder wins
+    if (winners.length > 0) {
       arrIdx2lost[outputIdx] = true;
       uint reward = PREDWAGER.add((RANDPRICE.add(RANDDEPOSIT)).div(winners.length));
-      // uint earliestTime = predWindowId2predWindow[winners[0].windowId].timestamp;
-      address earliestPreder = predWindowId2predWindow[winners[0].windowId].submitter;
+      address earliestPreder = prederHash2prederAddress[winners[0].windowId].submitter;
       for (i=0; i<winners.length; i++) {
-        predWindowId2predWindow[winners[i].windowId].submitter.transfer(reward); // pay winning preders
-        // if (earliestTime > predWindowId2predWindow[winners[i].windowId].timestamp) {
-        //   earliestTime = predWindowId2predWindow[winners[i].windowId].timestamp;
-        //   earliestPreder = predWindowId2predWindow[winners[i].windowId].submitter;
-        // }
+        prederHash2prederAddress[winners[i].windowId].submitter.transfer(reward); // pay winning preders
       }
       uint val = MAXRAND.sub(1);
       earliestPreder.transfer(address(this).balance.sub(val.mul(RANDDEPOSIT))); // send pot to first correct preder
-    } else { // a single rander won, all recent randers get paid
+    // a single rander won, all recent randers get paid
+    } else {
       idx = uint(int(outputIdx) - int(i) % int(MAXRAND));
       if (randExists[idx]) {
         rands[idx].submitter.transfer(RANDPRICE.div((i.add(2)))); // get winning rander (submitted Rand found at CURRIDX), pay randers according to rule
       }
     }
-
-    /*
-    // rands[outputIdx].submitter.transfer(RANDPRICE); // get winning rander (submitted Rand found at CURRIDX), pay randers according to rule
-    // for (uint i=0; i<MAXRAND; i++) {
-    //   idx = uint(int(outputIdx) - int(i) % int(MAXRAND));
-    //   if (randExists[idx]) {
-    //     rands[idx].submitter.transfer(RANDPRICE.div((i.add(2)))); // get winning rander (submitted Rand found at CURRIDX), pay randers according to rule
-    //   }
-    // }
-    */
-
     // delete arrIdx2predUnitArr[outputIdx]; // reset array
     emit requestedRand(msg.sender, rands[outputIdx].value);
     // winners.length = 0;
     return rands[outputIdx].value;
   }
-
-  /*
-  function sum(uint[] _ls) internal pure returns (uint) {
-    uint output;
-    for (uint i=0; i<_ls.length; i++) {
-      output = output.add(_ls[i]);
-    }
-    return output;
-  }
   */
 
-  function bytes32ToString(bytes32 x) internal pure returns (string) {
-    bytes memory bytesString = new bytes(32);
-    uint charCount = 0;
-    for (uint j = 0; j < 32; j++) {
-        byte char = byte(bytes32(uint(x) * 2 ** (8 * j)));
-        if (char != 0) {
-            bytesString[charCount] = char;
-            charCount++;
-        }
+  // Source: https://ethereum.stackexchange.com/questions/10615/concatenating-arrays-in-solidiy
+  function concat(bytes32[] Accounts, bytes32[1] Accounts2) public pure returns(bytes32[]) {
+    bytes32[] memory returnArr = new bytes32[](Accounts.length + Accounts2.length);
+    uint i=0;
+    for (; i < Accounts.length; i++) {
+        returnArr[i] = Accounts[i];
     }
-    bytes memory bytesStringTrimmed = new bytes(charCount);
-    for (j = 0; j < charCount; j++) {
-        bytesStringTrimmed[j] = bytesString[j];
+    uint j=0;
+    while (j < Accounts.length) {
+        returnArr[i++] = Accounts2[j++];
     }
-    return string(bytesStringTrimmed);
+    return returnArr;
   }
 
-  function stringToBytes32(string memory source) internal pure returns (bytes32 result) {
-    bytes memory tempEmptyStringTest = bytes(source);
-    if (tempEmptyStringTest.length == 0) {
-        return 0x0;
-    }
-
-    assembly {
-        result := mload(add(source, 32))
-    }
+  function min(uint a, uint b) public pure returns(uint) {
+      if (a <= b) {
+          return a;
+      } else {
+          return b;
+      }
   }
 
-  function () public payable {
-
-  }
+  function () public payable {}
 }
 
