@@ -13,39 +13,29 @@ contract Lava {
   }
 
   struct PredUnit {
-      string windowId; // super.id == id of parent window
+      address submitter;
       uint value;
   }
 
-  struct PredWindow {
-      address submitter;
-    //   uint timestamp;
-  }
-
   event receivedRand(address indexed _from, uint _value);
-  event receivedPred(address indexed _from, bytes32 _id, uint[] _window);
+  event receivedPred(address indexed _from, uint[] _window);
   event requestedRand(address indexed _from, uint _value); // who requested a value and the value they received
 
   uint MAXRAND = 3; // maximum number of rands in array // 100
-//   uint RANDPRICE = 0.1 ether;
-//   uint RANDDEPOSIT = 0.01 ether;
-//   uint PREDWAGER = 0.01 ether;
   uint RANDPRICE = 10 ether;
   uint RANDDEPOSIT = 1 ether;
   uint PREDWAGER = 1 ether;
   uint CURRIDX = 1; // current index in rands
-  PredUnit[] winners;
 
   mapping(uint => Rand) private rands; // cyclical array
   mapping(uint => bool) public randExists; // true if random number exists at index in cyclical array, else false
-  mapping(string => PredWindow) public predWindowId2predWindow;
-  mapping(uint => PredUnit[]) public arrIdx2predUnitArr;
+  mapping(uint => PredUnit[]) public arrIdx2predUnitArr; // all predictions per each index in cyclical array
+  mapping(uint => PredUnit) public winners; // winning PredUnits
   mapping(uint => bool) public arrIdx2lost; // true if rander at index lost to a preder, else false (default false)
 
   constructor () public payable {
     for (uint i=0; i<MAXRAND; i++) {
       randExists[i] = false;
-      arrIdx2predUnitArr[i].length = 0;
       arrIdx2lost[i] = false;
     }
     rands[0] = Rand({submitter: address(this), value: 0});
@@ -60,9 +50,7 @@ contract Lava {
       submitter: msg.sender,
       value: _value
     });
-    if (!arrIdx2lost[CURRIDX]) {
-      rands[CURRIDX].submitter.transfer(RANDDEPOSIT); // return deposit to rander being booted out of cyclical array
-    }
+    if (!arrIdx2lost[CURRIDX]) { rands[CURRIDX].submitter.transfer(RANDDEPOSIT); } // return deposit rander being booted from cyclical array
     rands[CURRIDX] = newRand;
     arrIdx2lost[CURRIDX] = false;
     randExists[CURRIDX] = true;
@@ -77,20 +65,15 @@ contract Lava {
     // √ register/ledger deposit
     require(msg.value >= PREDWAGER.mul(_guess.length)); // 1 wager per prediction
     require(_guess.length <= MAXRAND);
-    bytes32 newId = keccak256(abi.encodePacked(now, msg.sender));
-    predWindowId2predWindow[bytes32ToString(newId)] = PredWindow({
-        submitter: msg.sender
-        // timestamp: now
-    });
+    uint outputIdx = CURRIDX.sub(1) % MAXRAND;
     for (uint i=0; i<_guess.length; i++) {
       PredUnit memory newUnit = PredUnit({
-        windowId: bytes32ToString(newId),
+        submitter: msg.sender,
         value: _guess[i]
       });
-      arrIdx2predUnitArr[(i+CURRIDX) % MAXRAND].length++;
-      arrIdx2predUnitArr[(i+CURRIDX) % MAXRAND].push(newUnit);
+      arrIdx2predUnitArr[(i+outputIdx) % MAXRAND].push(newUnit);
     }
-    emit receivedPred(msg.sender, newId, _guess);
+    emit receivedPred(msg.sender, _guess);
   }
 
   function requestRand() public payable returns (uint) {
@@ -101,91 +84,29 @@ contract Lava {
     require(msg.value >= RANDPRICE);
     uint outputIdx = CURRIDX.sub(1) % MAXRAND;
     uint idx;
-
+    uint reward;
+    uint nWinners = 0;
     for (uint i=0; i<arrIdx2predUnitArr[outputIdx].length; i++) {
       if (arrIdx2predUnitArr[outputIdx][i].value == rands[outputIdx].value) {
-        winners.length++;
-        winners.push(arrIdx2predUnitArr[outputIdx][i]); // get list of winning preders' PredUnit's
+        winners[i] = arrIdx2predUnitArr[outputIdx][i]; // enumerate winning PredUnits
+        nWinners++;
       }
     }
-
-    if (winners.length > 0) { // at least one preder wins
-      arrIdx2lost[outputIdx] = true;
-      uint reward = PREDWAGER.add((RANDPRICE.add(RANDDEPOSIT)).div(winners.length));
-      // uint earliestTime = predWindowId2predWindow[winners[0].windowId].timestamp;
-      address earliestPreder = predWindowId2predWindow[winners[0].windowId].submitter;
-      for (i=0; i<winners.length; i++) {
-        predWindowId2predWindow[winners[i].windowId].submitter.transfer(reward); // pay winning preders
-        // if (earliestTime > predWindowId2predWindow[winners[i].windowId].timestamp) {
-        //   earliestTime = predWindowId2predWindow[winners[i].windowId].timestamp;
-        //   earliestPreder = predWindowId2predWindow[winners[i].windowId].submitter;
-        // }
-      }
-      uint val = MAXRAND.sub(1);
-      earliestPreder.transfer(address(this).balance.sub(val.mul(RANDDEPOSIT))); // send pot to first correct preder
+    if (nWinners > 0) { // at least one preder wins
+      if (arrIdx2lost[outputIdx]) { reward = RANDPRICE.div(nWinners); } // if random number was predicted already or if constructor is rander
+      else { reward = PREDWAGER.add(RANDPRICE.div(nWinners)); } // if random number was not predicted already
+      for (i=0; i<nWinners; i++) { winners[i].submitter.transfer(reward); } // pay winning preders
+      winners[0].submitter.transfer(address(this).balance); // send pot to first correct preder
+      for (i=0; i<MAXRAND; i++) { arrIdx2lost[i] = true; } // all randers suffer
     } else { // a single rander won, all recent randers get paid
       idx = uint(int(outputIdx) - int(i) % int(MAXRAND));
-      if (randExists[idx]) {
-        rands[idx].submitter.transfer(RANDPRICE.div((i.add(2)))); // get winning rander (submitted Rand found at CURRIDX), pay randers according to rule
-      }
+      if (randExists[idx]) { rands[idx].submitter.transfer(RANDPRICE.div((i.add(2)))); } // pay randers earliest to latest
     }
-
-    /*
-    // rands[outputIdx].submitter.transfer(RANDPRICE); // get winning rander (submitted Rand found at CURRIDX), pay randers according to rule
-    // for (uint i=0; i<MAXRAND; i++) {
-    //   idx = uint(int(outputIdx) - int(i) % int(MAXRAND));
-    //   if (randExists[idx]) {
-    //     rands[idx].submitter.transfer(RANDPRICE.div((i.add(2)))); // get winning rander (submitted Rand found at CURRIDX), pay randers according to rule
-    //   }
-    // }
-    */
-
     // delete arrIdx2predUnitArr[outputIdx]; // reset array
     emit requestedRand(msg.sender, rands[outputIdx].value);
-    // winners.length = 0;
     return rands[outputIdx].value;
   }
 
-  /*
-  function sum(uint[] _ls) internal pure returns (uint) {
-    uint output;
-    for (uint i=0; i<_ls.length; i++) {
-      output = output.add(_ls[i]);
-    }
-    return output;
-  }
-  */
-
-  function bytes32ToString(bytes32 x) internal pure returns (string) {
-    bytes memory bytesString = new bytes(32);
-    uint charCount = 0;
-    for (uint j = 0; j < 32; j++) {
-        byte char = byte(bytes32(uint(x) * 2 ** (8 * j)));
-        if (char != 0) {
-            bytesString[charCount] = char;
-            charCount++;
-        }
-    }
-    bytes memory bytesStringTrimmed = new bytes(charCount);
-    for (j = 0; j < charCount; j++) {
-        bytesStringTrimmed[j] = bytesString[j];
-    }
-    return string(bytesStringTrimmed);
-  }
-
-  function stringToBytes32(string memory source) internal pure returns (bytes32 result) {
-    bytes memory tempEmptyStringTest = bytes(source);
-    if (tempEmptyStringTest.length == 0) {
-        return 0x0;
-    }
-
-    assembly {
-        result := mload(add(source, 32))
-    }
-  }
-
-  function () public payable {
-
-  }
+  function () public payable {}
 }
 
