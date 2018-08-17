@@ -26,11 +26,13 @@ contract Lava {
   uint RANDDEPOSIT = 1 ether;
   uint PREDWAGER = 1 ether;
   uint CURRIDX = 1; // current index in rands
+  uint nWinners = 0;
+  bool predPeat = false; // true if preders paid out >= once but can still win again if submitRand() has not been called since, else false
 
   mapping(uint => Rand) private rands; // cyclical array
   mapping(uint => bool) public randExists; // true if random number exists at index in cyclical array, else false
-  mapping(uint => PredUnit[]) public arrIdx2predUnitArr; // all predictions per each index in cyclical array
   mapping(uint => PredUnit) public winners; // winning PredUnits
+  mapping(uint => PredUnit[]) public arrIdx2predUnitArr; // all predictions per each index in cyclical array
   mapping(uint => bool) public arrIdx2lost; // true if rander at index lost to a preder, else false (default false)
 
   constructor () public payable {
@@ -54,7 +56,9 @@ contract Lava {
     rands[CURRIDX] = newRand;
     arrIdx2lost[CURRIDX] = false;
     randExists[CURRIDX] = true;
-    CURRIDX = CURRIDX.add(1) % MAXRAND;
+    if (predPeat) { delete arrIdx2predUnitArr[CURRIDX]; } // reset array
+    predPeat = false;
+    CURRIDX = (CURRIDX.add(1)).mod(MAXRAND);
     emit receivedRand(msg.sender, _value);
   }
 
@@ -65,7 +69,7 @@ contract Lava {
     // √ register/ledger deposit
     require(msg.value >= PREDWAGER.mul(_guess.length)); // 1 wager per prediction
     require(_guess.length <= MAXRAND);
-    uint outputIdx = CURRIDX.sub(1) % MAXRAND;
+    uint outputIdx = wrapSub(CURRIDX, 1, MAXRAND);
     for (uint i=0; i<_guess.length; i++) {
       PredUnit memory newUnit = PredUnit({
         submitter: msg.sender,
@@ -82,30 +86,40 @@ contract Lava {
     // √ sends payments to appropriate players (rander recency or preder relative wager)
     // √ returns rand from timeline of most current timestamp
     require(msg.value >= RANDPRICE);
-    uint outputIdx = CURRIDX.sub(1) % MAXRAND;
+    uint outputIdx = wrapSub(CURRIDX, 1, MAXRAND);
     uint idx;
+    uint i;
     uint reward;
-    uint nWinners = 0;
-    for (uint i=0; i<arrIdx2predUnitArr[outputIdx].length; i++) {
-      if (arrIdx2predUnitArr[outputIdx][i].value == rands[outputIdx].value) {
-        winners[i] = arrIdx2predUnitArr[outputIdx][i]; // enumerate winning PredUnits
-        nWinners++;
-      }
+    if (predPeat) {
+        reward = RANDPRICE.div(nWinners);
+        for (i=0; i<nWinners; i++) { winners[i].submitter.transfer(reward); } // pay winning preders
+    } else {
+        nWinners = 0;
+        for (i=0; i<arrIdx2predUnitArr[outputIdx].length; i++) {
+          if (arrIdx2predUnitArr[outputIdx][i].value == rands[outputIdx].value) {
+            winners[i] = arrIdx2predUnitArr[outputIdx][i]; // enumerate winning PredUnits
+            nWinners++;
+          }
+        }
+        if (nWinners > 0) { // at least one preder wins
+          if (arrIdx2lost[outputIdx]) { reward = RANDPRICE.div(nWinners); } // if random number was predicted already or if constructor is rander
+          else { reward = PREDWAGER.add(RANDPRICE.div(nWinners)); } // if random number was not predicted already
+          for (i=0; i<nWinners; i++) { winners[i].submitter.transfer(reward); } // pay winning preders
+          winners[0].submitter.transfer(address(this).balance); // send pot to first correct preder
+          for (i=0; i<MAXRAND; i++) { arrIdx2lost[i] = true; } // all randers suffer
+          predPeat = true;
+        } else { // a single rander won, all recent randers get paid from earliest to last
+          for (i=0; i<MAXRAND; i++) {
+            idx = wrapSub(outputIdx, i, MAXRAND);
+            if (randExists[idx]) { rands[idx].submitter.transfer(RANDPRICE.div(i.add(2))); }
+          }
+        }
     }
-    if (nWinners > 0) { // at least one preder wins
-      if (arrIdx2lost[outputIdx]) { reward = RANDPRICE.div(nWinners); } // if random number was predicted already or if constructor is rander
-      else { reward = PREDWAGER.add(RANDPRICE.div(nWinners)); } // if random number was not predicted already
-      for (i=0; i<nWinners; i++) { winners[i].submitter.transfer(reward); } // pay winning preders
-      winners[0].submitter.transfer(address(this).balance); // send pot to first correct preder
-      for (i=0; i<MAXRAND; i++) { arrIdx2lost[i] = true; } // all randers suffer
-    } else { // a single rander won, all recent randers get paid
-      idx = uint(int(outputIdx) - int(i) % int(MAXRAND));
-      if (randExists[idx]) { rands[idx].submitter.transfer(RANDPRICE.div((i.add(2)))); } // pay randers earliest to latest
-    }
-    // delete arrIdx2predUnitArr[outputIdx]; // reset array
     emit requestedRand(msg.sender, rands[outputIdx].value);
     return rands[outputIdx].value;
   }
+
+  function wrapSub(uint a, uint b, uint c) public pure returns(uint) { return uint(int(a) - int(b)).mod(c); } // computes (a-b)%c
 
   function () public payable {}
 }
