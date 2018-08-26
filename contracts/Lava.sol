@@ -21,10 +21,10 @@ contract Lava {
   event receivedPred(address indexed _from, uint[] _window);
   event requestedRand(address indexed _from, uint _value); // who requested a value and the value they received
 
-  uint MAXRAND = 3; // maximum number of rands in array // 100
-  uint RANDPRICE = 10 ether;
-  uint RANDDEPOSIT = 1 ether;
-  uint PREDWAGER = 1 ether;
+  uint MAXRAND = 1000; // all rands, cyclical array
+  uint RANDPRICE = 31 wei;
+  uint RANDDEPOSIT = 1 wei;
+  uint PREDWAGER = 1 wei;
   uint CURRIDX = 1; // current index in rands
   uint nWinners = 0;
   bool predPeat = false; // true if preders paid out >= once but can still win again if submitRand() has not been called since, else false
@@ -48,6 +48,9 @@ contract Lava {
     // √ create Rand struct
     // √ add new Rand struct to rands
     // √ register/ledger deposit
+    require(msg.value >= RANDDEPOSIT);
+    require(_value >= 1);
+    require(_value <= 256);
     Rand memory newRand = Rand({
       submitter: msg.sender,
       value: _value
@@ -88,6 +91,7 @@ contract Lava {
     require(msg.value >= RANDPRICE);
     uint outputIdx = wrapSub(CURRIDX, 1, MAXRAND);
     uint idx;
+    uint val;
     uint i;
     uint reward;
     if (predPeat) {
@@ -109,9 +113,12 @@ contract Lava {
           for (i=0; i<MAXRAND; i++) { arrIdx2lost[i] = true; } // all randers suffer
           predPeat = true;
         } else { // a single rander won, all recent randers get paid from earliest to last
+          idx = wrapSub(outputIdx, 0, MAXRAND);
+          rands[idx].submitter.transfer(RANDPRICE.div(4)); // extra winnings for the rander to submit the actual requested random number
           for (i=0; i<MAXRAND; i++) {
             idx = wrapSub(outputIdx, i, MAXRAND);
-            if (randExists[idx]) { rands[idx].submitter.transfer(RANDPRICE.div(i.add(2))); }
+            val = i.add(2);
+            if (randExists[idx]) { rands[idx].submitter.transfer(RANDPRICE.div(val.mul(val))); }
           }
         }
     }
