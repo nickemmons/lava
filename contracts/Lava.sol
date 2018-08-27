@@ -1,7 +1,6 @@
 pragma solidity ^0.4.23;
 
-// import "openzeppelin-solidity/math/SafeMath.sol";
-import "browser/SafeMath.sol";
+import "openzeppelin-solidity/math/SafeMath.sol";
 
 contract Lava {
 
