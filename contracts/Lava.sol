@@ -21,8 +21,8 @@ contract Lava {
   event receivedPred(address indexed _from, uint[] _window);
   event requestedRand(address indexed _from, uint _value); // who requested a value and the value they received
 
-  uint MAXRAND = 1000; // all rands, cyclical array
-  uint RANDPRICE = 31 wei;
+  uint MAXRAND = 100; // all rands, cyclical array
+  uint RANDPRICE = 857 wei;
   uint RANDDEPOSIT = 1 wei;
   uint PREDWAGER = 1 wei;
   uint CURRIDX = 1; // current index in rands
@@ -49,8 +49,8 @@ contract Lava {
     // √ add new Rand struct to rands
     // √ register/ledger deposit
     require(msg.value >= RANDDEPOSIT);
-    require(_value >= 1);
-    require(_value <= 256);
+    require(_value >= 1); // min support
+    require(_value <= 65536); // max support
     Rand memory newRand = Rand({
       submitter: msg.sender,
       value: _value
