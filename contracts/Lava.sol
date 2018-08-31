@@ -13,41 +13,35 @@ contract Lava {
   }
 
   struct PredUnit {
-      bytes32 windowId; // super.id == id of parent window
+      address submitter;
       uint value;
   }
 
-  struct PredWindow {
-      address submitter;
-    //   uint timestamp;
-  }
-
   event receivedRand(address indexed _from, uint _value);
-  event receivedPred(address indexed _from, bytes32 _id, uint[] _window);
+  event receivedPred(address indexed _from, uint[] _window);
   event requestedRand(address indexed _from, uint _value); // who requested a value and the value they received
 
-  uint MAXRAND = 100; // maximum number of rands in array
-  uint RANDPRICE = 0.1 ether;
-  uint RANDDEPOSIT = 0.01 ether;
-  uint PREDWAGER = 0.01 ether;
+  uint MAXRAND = 100; // all rands, cyclical array
+  uint RANDPRICE = 857 wei;
+  uint RANDDEPOSIT = 1 wei;
+  uint PREDWAGER = 1 wei;
   uint CURRIDX = 1; // current index in rands
-  PredUnit[] winners;
-  /* Rand[MAXRAND] rands; // cyclical array */
+  uint nWinners = 0;
+  bool predPeat = false; // true if preders paid out >= once but can still win again if submitRand() has not been called since, else false
 
   mapping(uint => Rand) private rands; // cyclical array
   mapping(uint => bool) public randExists; // true if random number exists at index in cyclical array, else false
-  mapping(bytes32 => PredWindow) public predWindowId2predWindow;
-  mapping(uint => PredUnit[]) public arrIdx2predUnitArr;
+  mapping(uint => PredUnit) public winners; // winning PredUnits
+  mapping(uint => PredUnit[]) public arrIdx2predUnitArr; // all predictions per each index in cyclical array
   mapping(uint => bool) public arrIdx2lost; // true if rander at index lost to a preder, else false (default false)
 
   constructor () public payable {
-    require(msg.value >= RANDDEPOSIT);
     for (uint i=0; i<MAXRAND; i++) {
       randExists[i] = false;
-    //   arrIdx2predUnitArr[i] = ls;
       arrIdx2lost[i] = false;
     }
     rands[0] = Rand({submitter: address(this), value: 0});
+    arrIdx2lost[0] = true;
   }
 
   function submitRand(uint _value) public payable {
@@ -55,17 +49,19 @@ contract Lava {
     // √ add new Rand struct to rands
     // √ register/ledger deposit
     require(msg.value >= RANDDEPOSIT);
+    require(_value >= 1); // min support
+    require(_value <= 65536); // max support
     Rand memory newRand = Rand({
       submitter: msg.sender,
       value: _value
     });
-    if (!arrIdx2lost[CURRIDX]) {
-      rands[CURRIDX].submitter.transfer(RANDDEPOSIT); // return deposit to rander being booted out of cyclical array
-    }
+    if (!arrIdx2lost[CURRIDX]) { rands[CURRIDX].submitter.transfer(RANDDEPOSIT); } // return deposit rander being booted from cyclical array
     rands[CURRIDX] = newRand;
     arrIdx2lost[CURRIDX] = false;
     randExists[CURRIDX] = true;
-    CURRIDX = (CURRIDX.add(1)) % MAXRAND;
+    if (predPeat) { delete arrIdx2predUnitArr[CURRIDX]; } // reset array
+    predPeat = false;
+    CURRIDX = (CURRIDX.add(1)).mod(MAXRAND);
     emit receivedRand(msg.sender, _value);
   }
 
@@ -76,19 +72,15 @@ contract Lava {
     // √ register/ledger deposit
     require(msg.value >= PREDWAGER.mul(_guess.length)); // 1 wager per prediction
     require(_guess.length <= MAXRAND);
-    bytes32 newId = keccak256(abi.encodePacked(now, msg.sender));
-    predWindowId2predWindow[newId] = PredWindow({
-        submitter: msg.sender
-        // timestamp: now
-    });
+    uint outputIdx = wrapSub(CURRIDX, 1, MAXRAND);
     for (uint i=0; i<_guess.length; i++) {
       PredUnit memory newUnit = PredUnit({
-        windowId: newId,
+        submitter: msg.sender,
         value: _guess[i]
       });
-      arrIdx2predUnitArr[(i+CURRIDX) % MAXRAND].push(newUnit);
+      arrIdx2predUnitArr[(i+outputIdx) % MAXRAND].push(newUnit);
     }
-    emit receivedPred(msg.sender, newId, _guess);
+    emit receivedPred(msg.sender, _guess);
   }
 
   function requestRand() public payable returns (uint) {
@@ -97,62 +89,45 @@ contract Lava {
     // √ sends payments to appropriate players (rander recency or preder relative wager)
     // √ returns rand from timeline of most current timestamp
     require(msg.value >= RANDPRICE);
-    uint outputIdx = CURRIDX.sub(1) % MAXRAND;
+    uint outputIdx = wrapSub(CURRIDX, 1, MAXRAND);
     uint idx;
-
-    for (uint i=0; i<arrIdx2predUnitArr[outputIdx].length; i++) {
-      if (arrIdx2predUnitArr[outputIdx][i].value == rands[outputIdx].value) {
-        winners.push(arrIdx2predUnitArr[outputIdx][i]); // get list of winning preders' PredUnit's
-      }
+    uint val;
+    uint i;
+    uint reward;
+    if (predPeat) {
+        reward = RANDPRICE.div(nWinners);
+        for (i=0; i<nWinners; i++) { winners[i].submitter.transfer(reward); } // pay winning preders
+    } else {
+        nWinners = 0;
+        for (i=0; i<arrIdx2predUnitArr[outputIdx].length; i++) {
+          if (arrIdx2predUnitArr[outputIdx][i].value == rands[outputIdx].value) {
+            winners[i] = arrIdx2predUnitArr[outputIdx][i]; // enumerate winning PredUnits
+            nWinners++;
+          }
+        }
+        if (nWinners > 0) { // at least one preder wins
+          if (arrIdx2lost[outputIdx]) { reward = RANDPRICE.div(nWinners); } // if random number was predicted already or if constructor is rander
+          else { reward = PREDWAGER.add(RANDPRICE.div(nWinners)); } // if random number was not predicted already
+          for (i=0; i<nWinners; i++) { winners[i].submitter.transfer(reward); } // pay winning preders
+          winners[0].submitter.transfer(address(this).balance); // send pot to first correct preder
+          for (i=0; i<MAXRAND; i++) { arrIdx2lost[i] = true; } // all randers suffer
+          predPeat = true;
+        } else { // a single rander won, all recent randers get paid from earliest to last
+          idx = wrapSub(outputIdx, 0, MAXRAND);
+          rands[idx].submitter.transfer(RANDPRICE.div(4)); // extra winnings for the rander to submit the actual requested random number
+          for (i=0; i<MAXRAND; i++) {
+            idx = wrapSub(outputIdx, i, MAXRAND);
+            val = i.add(2);
+            if (randExists[idx]) { rands[idx].submitter.transfer(RANDPRICE.div(val.mul(val))); }
+          }
+        }
     }
-
-    if (winners.length > 0) { // at least one preder wins
-      arrIdx2lost[outputIdx] = true;
-      uint reward = PREDWAGER.add((RANDPRICE.add(RANDDEPOSIT)).div(winners.length));
-      // uint earliestTime = predWindowId2predWindow[winners[0].windowId].timestamp;
-      address earliestPreder = predWindowId2predWindow[winners[0].windowId].submitter;
-      for (i=0; i<winners.length; i++) {
-        predWindowId2predWindow[winners[i].windowId].submitter.transfer(reward); // pay winning preders
-        // if (earliestTime > predWindowId2predWindow[winners[i].windowId].timestamp) {
-        //   earliestTime = predWindowId2predWindow[winners[i].windowId].timestamp;
-        //   earliestPreder = predWindowId2predWindow[winners[i].windowId].submitter;
-        // }
-      }
-      uint val = MAXRAND.sub(1);
-      earliestPreder.transfer(address(this).balance.sub(val.mul(RANDDEPOSIT))); // send pot to first correct preder
-    } else { // a single rander won, all recent randers get paid
-      idx = uint(int(outputIdx) - int(i) % int(MAXRAND));
-      if (randExists[idx]) {
-        rands[idx].submitter.transfer(RANDPRICE.div((i.add(2)))); // get winning rander (submitted Rand found at CURRIDX), pay randers according to rule
-      }
-    }
-
-    /*
-    // rands[outputIdx].submitter.transfer(RANDPRICE); // get winning rander (submitted Rand found at CURRIDX), pay randers according to rule
-    // for (uint i=0; i<MAXRAND; i++) {
-    //   idx = uint(int(outputIdx) - int(i) % int(MAXRAND));
-    //   if (randExists[idx]) {
-    //     rands[idx].submitter.transfer(RANDPRICE.div((i.add(2)))); // get winning rander (submitted Rand found at CURRIDX), pay randers according to rule
-    //   }
-    // }
-    */
-
-    // delete arrIdx2predUnitArr[outputIdx]; // reset array
     emit requestedRand(msg.sender, rands[outputIdx].value);
-    // winners.length = 0;
     return rands[outputIdx].value;
   }
 
-  function sum(uint[] _ls) internal pure returns (uint) {
-    uint output;
-    for (uint i=0; i<_ls.length; i++) {
-      output = output.add(_ls[i]);
-    }
-    return output;
-  }
+  function wrapSub(uint a, uint b, uint c) public pure returns(uint) { return uint(int(a) - int(b)).mod(c); } // computes (a-b)%c
 
-  function () public payable {
-
-  }
+  function () public payable {}
 }
 
